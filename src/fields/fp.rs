@@ -279,6 +279,18 @@ impl Fp {
         (&Fp([r1, r2, r3, r4])).sub(&MODULUS)
     }
 
+    /// Half this field element
+    #[inline]
+    pub fn half(&mut self) {
+        let mut t = 0;
+        for i in self.0.iter_mut().rev() {
+            let t2 = *i << 63;
+            *i >>= 1;
+            *i |= t;
+            t = t2;
+        }
+    }
+
     fn from_u512(limbs: [u64; 8]) -> Fp {
         // We reduce an arbitrary 512-bit number by decomposing it into two 256-bit digits
         // with the higher bits multiplied by 2^256. Thus, we perform two reductions
