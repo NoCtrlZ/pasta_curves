@@ -262,8 +262,91 @@ impl Fp {
     /// Doubles this field element.
     #[inline]
     pub const fn double(&self) -> Fp {
-        // TODO: This can be achieved more efficiently with a bitshift.
-        self.add(self)
+        let r1 = self.0[0] << 1;
+
+        let c = self.0[0] >> 63;
+        let tmp = self.0[1] << 1;
+        let r2 = tmp | c;
+
+        let c = self.0[1] >> 63;
+        let tmp = self.0[2] << 1;
+        let r3 = tmp | c;
+
+        let c = self.0[2] >> 63;
+        let tmp = self.0[3] << 1;
+        let r4 = tmp | c;
+
+        (&Fp([r1, r2, r3, r4])).sub(&MODULUS)
+    }
+
+    /// Half this field element
+    #[inline]
+    pub fn half(&mut self) -> Fp {
+        let r4 = self.0[3] >> 1;
+
+        let c = self.0[3] << 63;
+        let tmp = self.0[2] >> 1;
+        let r3 = tmp | c;
+
+        let c = self.0[2] << 63;
+        let tmp = self.0[1] >> 1;
+        let r2 = tmp | c;
+
+        let c = self.0[1] << 63;
+        let tmp = self.0[0] >> 1;
+        let r1 = tmp | c;
+
+        Fp([r1, r2, r3, r4])
+    }
+
+    /// Return wNAF form
+    ///
+    /// https://link.springer.com/content/pdf/10.1007/978-3-540-68914-0_26.pdf (page 8, algorithm 3)
+    pub fn wnaf(self, w: u64) -> [i64; 254] {
+        let mut wnaf: [i64; 254] = [0; 254];
+        let mut target = self;
+        let window = 1 << (w);
+        let extended_window = 1 << (w + 1);
+
+        wnaf.iter_mut().for_each(|i| {
+            if bool::from(target.is_odd()) {
+                let r = (self.0[0] % extended_window) as i64;
+                if r > window {
+                    let neg_r = r - extended_window as i64;
+                    *i = neg_r;
+                    target.sub_u64(-neg_r as u64);
+                } else {
+                    *i = r;
+                    target.add_u64(r as u64);
+                }
+            } else {
+                *i = 0
+            }
+            target = target.half()
+        });
+        wnaf
+    }
+
+    /// Subtracts `rhs` from `self`, returning the result.
+    #[inline]
+    fn sub_u64(&self, rhs: u64) -> Self {
+        let (d0, borrow) = sbb(self.0[0], rhs, 0);
+        let (d1, borrow) = sbb(self.0[1], 0, borrow);
+        let (d2, borrow) = sbb(self.0[2], 0, borrow);
+        let (d3, _) = sbb(self.0[3], 0, borrow);
+
+        Fp([d0, d1, d2, d3])
+    }
+
+    /// Adds `rhs` to `self`, returning the result.
+    #[inline]
+    fn add_u64(&self, rhs: u64) -> Self {
+        let (d0, carry) = adc(self.0[0], rhs, 0);
+        let (d1, carry) = adc(self.0[1], 0, carry);
+        let (d2, carry) = adc(self.0[2], 0, carry);
+        let (d3, _) = adc(self.0[3], 0, carry);
+
+        Fp([d0, d1, d2, d3])
     }
 
     fn from_u512(limbs: [u64; 8]) -> Fp {
@@ -787,6 +870,23 @@ impl ec_gpu::GpuField for Fp {
 
 #[cfg(test)]
 use ff::Field;
+
+#[cfg(test)]
+use rand_xorshift::XorShiftRng;
+
+#[cfg(test)]
+use rand::SeedableRng;
+
+#[test]
+fn test_add() {
+    let mut rng = XorShiftRng::from_seed([
+        0x59, 0x62, 0xbe, 0x5d, 0x76, 0x3d, 0x31, 0x8d, 0x17, 0xdb, 0x37, 0x32, 0x54, 0x06, 0xbc,
+        0xe5,
+    ]);
+    let a = Fp::random(&mut rng);
+    let b = a.clone();
+    assert_eq!(a.double(), a.add(b))
+}
 
 #[test]
 fn test_inv() {
